@@ -55,6 +55,20 @@ def run_with_timeout(timeout_s: int, kill_after_s: int, argv: Sequence[str]) -> 
     return subprocess.run(cmd, check=False, capture_output=True, text=True)
 
 
+def run_streaming(argv: Sequence[str]) -> int:
+    """Run a command and stream stdout/stderr directly to the terminal.
+
+    This avoids wrapping with a timeout and does not capture output, matching
+    interactive behavior (e.g., tail -f).
+    """
+    try:
+        proc = subprocess.run(list(argv), check=False)
+        return proc.returncode
+    except KeyboardInterrupt:
+        # Propagate a conventional exit code for SIGINT
+        return 130
+
+
 def gcloud_tpu_ssh(
     *,
     tpu_name: str,
@@ -94,3 +108,48 @@ def gcloud_tpu_ssh(
     if command:
         args += ["bash", "-lc", command]
     return run_with_timeout(ssh.total_timeout_s, ssh.kill_after_s, args)
+
+
+def gcloud_tpu_ssh_stream(
+    *,
+    tpu_name: str,
+    project: str,
+    zone: str,
+    worker: str | None = None,
+    command: str | None = None,
+    extra_args: Iterable[str] | None = None,
+    ssh: SSHOptions | None = None,
+) -> int:
+    """Run gcloud TPU SSH and stream output live without a timeout wrapper.
+
+    Intended for long-running interactive commands like tail -f.
+    """
+    ssh = ssh or SSHOptions()
+    args: list[str] = [
+        "gcloud",
+        "alpha",
+        "compute",
+        "tpus",
+        "tpu-vm",
+        "ssh",
+        tpu_name,
+        "--project",
+        project,
+        "--zone",
+        zone,
+    ]
+    if worker is not None:
+        args += ["--worker", str(worker)]
+    if ssh.key_file and os.path.exists(ssh.key_file):
+        args += ["--ssh-key-file", ssh.key_file]
+    if worker == "all":
+        if command:
+            args += ["--command", command]
+        return run_streaming(args)
+    if extra_args:
+        args.extend(list(extra_args))
+    args.append("--")
+    args.extend(ssh.to_ssh_flags())
+    if command:
+        args += ["bash", "-lc", command]
+    return run_streaming(args)

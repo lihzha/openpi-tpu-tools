@@ -10,6 +10,7 @@ from typing import Literal
 from .config import TPUEnvConfig
 from .ssh import SSHOptions
 from .ssh import gcloud_tpu_ssh
+from .ssh import gcloud_tpu_ssh_stream
 from .ssh import run_with_timeout
 
 
@@ -153,22 +154,24 @@ class TPUManager:
             # Use -l to send a literal line to the shell; quote once for remote bash parsing
             f"tmux send-keys -t {session} -l {shlex.quote(line)} C-m"
         )
-        proc = gcloud_tpu_ssh(
-            tpu_name=self.env.tpu_name,
-            project=self.env.tpu_project,
-            zone=self._zone_for(version),
-            worker="all",
-            command=f"bash -lc {shlex.quote(remote)}",
-            ssh=self.ssh,
+        return (
+            gcloud_tpu_ssh_stream(
+                tpu_name=self.env.tpu_name,
+                project=self.env.tpu_project,
+                zone=self._zone_for(version),
+                worker="all",
+                command=remote,
+                ssh=self.ssh,
+            )
+            == 0
         )
-        return proc.returncode == 0
 
     def raw(self, version: Literal["v4", "v5", "v6"], *, cmd: str, worker: str | None = "all") -> int:
         """Run a raw command on TPU worker(s) without tmux.
 
         Mirrors `v4 "<cmd>"` style helpers from ~/.tpu_funcs.sh.
         """
-        proc = gcloud_tpu_ssh(
+        return gcloud_tpu_ssh_stream(
             tpu_name=self.env.tpu_name,
             project=self.env.tpu_project,
             zone=self._zone_for(version),
@@ -176,15 +179,9 @@ class TPUManager:
             command=cmd,
             ssh=self.ssh,
         )
-        # Forward remote stdout/stderr to local terminal
-        if proc.stdout:
-            print(proc.stdout, end="")
-        if proc.stderr:
-            print(proc.stderr, end="")
-        return proc.returncode
 
     def attach(self, version: Literal["v4", "v5", "v6"], *, session: str = "tpu", worker: int = 0) -> int:
-        proc = gcloud_tpu_ssh(
+        return gcloud_tpu_ssh_stream(
             tpu_name=self.env.tpu_name,
             project=self.env.tpu_project,
             zone=self._zone_for(version),
@@ -192,31 +189,31 @@ class TPUManager:
             command=f"tmux attach -t {shlex.quote(session)} || tmux new -As {shlex.quote(session)}",
             ssh=self.ssh,
         )
-        return proc.returncode
 
     def tmux_ls(self, version: Literal["v4", "v5", "v6"]) -> bool:
-        proc = gcloud_tpu_ssh(
-            tpu_name=self.env.tpu_name,
-            project=self.env.tpu_project,
-            zone=self._zone_for(version),
-            worker="all",
-            command="tmux ls || true",
-            ssh=self.ssh,
+        return (
+            gcloud_tpu_ssh_stream(
+                tpu_name=self.env.tpu_name,
+                project=self.env.tpu_project,
+                zone=self._zone_for(version),
+                worker="all",
+                command="tmux ls || true",
+                ssh=self.ssh,
+            )
+            == 0
         )
-        print(proc.stdout)
-        return proc.returncode == 0
 
     def tail_log(self, version: Literal["v4", "v5", "v6"], *, worker: int = 0) -> int:
         cmd = f"cd ~/{self.env.gh_repo_name}/logs && tail -n 200 -f $(ls -1t | head -n1)"
-        proc = gcloud_tpu_ssh(
+        rc = gcloud_tpu_ssh_stream(
             tpu_name=self.env.tpu_name,
             project=self.env.tpu_project,
             zone=self._zone_for(version),
             worker=str(worker),
-            command=f"bash -lc {shlex.quote(cmd)}",
+            command=cmd,
             ssh=self.ssh,
         )
-        return proc.returncode
+        return rc
 
     def tmux_kill_all(self, version: Literal["v4", "v5", "v6"]) -> bool:
         remote = (
@@ -225,38 +222,42 @@ class TPUManager:
             "tmux ls >/dev/null 2>&1 && tmux kill-server || true; "
             "rm -rf /tmp/tmux-$(id -u) 2>/dev/null || true; fi"
         )
-        proc = gcloud_tpu_ssh(
-            tpu_name=self.env.tpu_name,
-            project=self.env.tpu_project,
-            zone=self._zone_for(version),
-            worker="all",
-            command=f"bash -lc {shlex.quote(remote)}",
-            ssh=self.ssh,
+        return (
+            gcloud_tpu_ssh_stream(
+                tpu_name=self.env.tpu_name,
+                project=self.env.tpu_project,
+                zone=self._zone_for(version),
+                worker="all",
+                command=remote,
+                ssh=self.ssh,
+            )
+            == 0
         )
-        return proc.returncode == 0
 
     def kill_jax(self, version: Literal["v4", "v5", "v6"]) -> bool:
         remote = (
             "set -euo pipefail;"
             "PIDS=$(pgrep -u $USER -f python || true);"
             "for pid in $PIDS; do "
-            "if tr '\0' '\n' </proc/$pid/environ 2>/dev/null | grep -qE '(^(JAX_|XLA_|TPU_|LIBTPU))'; then "
+            "if tr '\\0' '\\n' </proc/$pid/environ 2>/dev/null | grep -qE '(^(JAX_|XLA_|TPU_|LIBTPU))'; then "
             "kill -TERM $pid 2>/dev/null || true; fi; done;"
             "sleep 2;"
             "for pid in $(pgrep -u $USER -f python || true); do "
-            "if tr '\0' '\n' </proc/$pid/environ 2>/dev/null | grep -qE '(^(JAX_|XLA_|TPU_|LIBTPU))'; then "
+            "if tr '\\0' '\\n' </proc/$pid/environ 2>/dev/null | grep -qE '(^(JAX_|XLA_|TPU_|LIBTPU))'; then "
             "kill -0 $pid 2>/dev/null && kill -KILL $pid 2>/dev/null || true; fi; done;"
             "pgrep -a -u $USER -f python || true"
         )
-        proc = gcloud_tpu_ssh(
-            tpu_name=self.env.tpu_name,
-            project=self.env.tpu_project,
-            zone=self._zone_for(version),
-            worker="all",
-            command=f"bash -lc {shlex.quote(remote)}",
-            ssh=self.ssh,
+        return (
+            gcloud_tpu_ssh_stream(
+                tpu_name=self.env.tpu_name,
+                project=self.env.tpu_project,
+                zone=self._zone_for(version),
+                worker="all",
+                command=remote,
+                ssh=self.ssh,
+            )
+            == 0
         )
-        return proc.returncode == 0
 
     def clean_jax_tmp(self, version: Literal["v4", "v5", "v6"]) -> bool:
         remote = (
@@ -270,15 +271,17 @@ class TPUManager:
             "( -name 'sem.*' -o -name 'psm_*' -o -name 'jax*' -o -name 'xla*' -o -name 'pjrt*' ) "
             "-print -exec rm -f {} + 2>/dev/null || true"
         )
-        proc = gcloud_tpu_ssh(
-            tpu_name=self.env.tpu_name,
-            project=self.env.tpu_project,
-            zone=self._zone_for(version),
-            worker="all",
-            command=f"bash -lc {shlex.quote(remote)}",
-            ssh=self.ssh,
+        return (
+            gcloud_tpu_ssh_stream(
+                tpu_name=self.env.tpu_name,
+                project=self.env.tpu_project,
+                zone=self._zone_for(version),
+                worker="all",
+                command=remote,
+                ssh=self.ssh,
+            )
+            == 0
         )
-        return proc.returncode == 0
 
     def nuke_all(self, version: Literal["v4", "v5", "v6"]) -> bool:
         ok = self.tmux_kill_all(version)
@@ -343,6 +346,7 @@ class TPUManager:
         echo idle
         """
         encoded = base64.b64encode(probe.encode()).decode().replace("\n", "")
+        # Use non-streaming so we can parse the result.
         proc = gcloud_tpu_ssh(
             tpu_name=self.env.tpu_name,
             project=self.env.tpu_project,

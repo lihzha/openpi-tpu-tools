@@ -176,7 +176,7 @@ def watch_and_run(cfg: WatchConfig, env: TPUEnvConfig) -> None:
 
             encoded = base64.b64encode(setup_script.encode()).decode().replace("\n", "")
             setup_cmd = f"bash -lc 'echo {encoded} | base64 -d | bash -s'"
-            if not mgr.tmux(cfg.version, cmd=setup_cmd, session="setup"):
+            if not mgr.raw(cfg.version, cmd=setup_cmd, worker="all"):
                 print(f"{_ts()} - Setup failed/SSH timed out. Back to state check.")
                 sleep(mgr.sleep_secs)
                 continue
