@@ -176,8 +176,9 @@ def watch_and_run(cfg: WatchConfig, env: TPUEnvConfig) -> None:
 
             encoded = base64.b64encode(setup_script.encode()).decode().replace("\n", "")
             setup_cmd = f"bash -lc 'echo {encoded} | base64 -d | bash -s'"
-            if not mgr.raw(cfg.version, cmd=setup_cmd, worker="all"):
-                print(f"{_ts()} - Setup failed/SSH timed out. Back to state check.")
+            rc = mgr.raw(cfg.version, cmd=setup_cmd, worker="all")
+            if rc != 0:
+                print(f"{_ts()} - Setup failed (rc={rc}). See above for remote logs. Back to state check.")
                 sleep(mgr.sleep_secs)
                 continue
 

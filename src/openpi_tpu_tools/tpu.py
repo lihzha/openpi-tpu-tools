@@ -11,6 +11,7 @@ from .config import TPUEnvConfig
 from .ssh import SSHOptions
 from .ssh import gcloud_tpu_ssh
 from .ssh import gcloud_tpu_ssh_stream
+from .ssh import run_streaming
 from .ssh import run_with_timeout
 
 
@@ -139,8 +140,8 @@ class TPUManager:
         else:  # v6
             args = [*common, "--accelerator-type", f"v6e-{tpu_num}", "--version", "v2-alpha-tpuv6e"]
 
-        proc = run_with_timeout(self.describe_timeout_s * 20, self.ssh.kill_after_s, args)
-        return proc.returncode == 0
+        rc = run_streaming(args)
+        return rc == 0
 
     def tmux(self, version: Literal["v4", "v5", "v6"], *, cmd: str, session: str = "tpu") -> bool:
         # Ensure tmux exists and start/send in a session across all workers
@@ -204,7 +205,12 @@ class TPUManager:
         )
 
     def tail_log(self, version: Literal["v4", "v5", "v6"], *, worker: int = 0) -> int:
-        cmd = f"cd ~/{self.env.gh_repo_name}/logs && tail -n 200 -f $(ls -1t | head -n1)"
+        # Pick newest regular file; avoid directories to prevent 'tail: is a directory'
+        cmd = (
+            f"cd ~/{self.env.gh_repo_name}/logs && "
+            'file=$(ls -1t 2>/dev/null | while read -r x; do [ -f "$x" ] && echo "$x" && break; done); '
+            '[ -n "$file" ] && tail -n 200 -f "$file" || echo \'No log files found in logs directory.\''
+        )
         rc = gcloud_tpu_ssh_stream(
             tpu_name=self.env.tpu_name,
             project=self.env.tpu_project,
