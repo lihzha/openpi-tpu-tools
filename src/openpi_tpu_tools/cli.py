@@ -20,7 +20,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_watch.add_argument("version", choices=["v4", "v5", "v6"], help="TPU version to target")
     p_watch.add_argument("--force", "-f", action="store_true", help="Force setup and training even if READY")
     p_watch.add_argument("--tpu-num", "-n", type=int, default=8, help="TPU chips")
-    p_watch.add_argument("extra", nargs=argparse.REMAINDER, help="Extra args to pass to training script")
 
     p_list = sub.add_parser("list", help="List TPUs in zone")
     _add_common(p_list)
@@ -78,11 +77,11 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     ap = build_parser()
-    ns = ap.parse_args(argv)
+    ns, unknown = ap.parse_known_args(argv)
     if ns.cmd == "watch":
         from .watch import main as _watch_main
 
-        return _watch_main([ns.version, *((ns.force and ["--force"]) or []), "-n", str(ns.tpu_num), *ns.extra])
+        return _watch_main([ns.version, *((ns.force and ["--force"]) or []), "-n", str(ns.tpu_num), *unknown])
 
     env = TPUEnvConfig.from_env()
     mgr = TPUManager(env)

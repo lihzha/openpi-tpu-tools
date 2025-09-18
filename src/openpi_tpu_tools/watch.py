@@ -126,7 +126,10 @@ def watch_and_run(cfg: WatchConfig, env: TPUEnvConfig) -> None:
             KEY_PATH="$HOME/.ssh/${GH_REPO}_deploy"
 
             mkdir -p ~/.ssh && chmod 700 ~/.ssh
+            # Generate key only if not present (idempotent)
+            if [ ! -f "$KEY_PATH" ]; then
             ssh-keygen -t ed25519 -N "" -f "$KEY_PATH" -C "$KEY_TITLE" >/dev/null
+            fi
 
             ssh-keyscan -t rsa,ecdsa,ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null || true
             chmod 600 ~/.ssh/known_hosts
@@ -149,6 +152,8 @@ def watch_and_run(cfg: WatchConfig, env: TPUEnvConfig) -> None:
             exit 1
             fi
 
+            # Append SSH config only if missing (idempotent)
+            if ! grep -q "^Host github-${GH_REPO}$" ~/.ssh/config 2>/dev/null; then
             {
             echo "Host github-${GH_REPO}"
             echo "  HostName github.com"
@@ -156,15 +161,15 @@ def watch_and_run(cfg: WatchConfig, env: TPUEnvConfig) -> None:
             echo "  IdentityFile ${KEY_PATH}"
             echo "  IdentitiesOnly yes"
             } >> ~/.ssh/config
+            fi
             chmod 600 ~/.ssh/config
 
-            # 4. Clone the repository
+            # 4. Clone the repository and set up deps only if missing
             if [ ! -d "${GH_REPO}/.git" ]; then
-            git clone --recurse-submodules "git@github-${GH_REPO}:${GH_OWNER}/${GH_REPO}.git"
-            fi
-
+            git clone --recurse-submodules "git@github-${GH_REPO}:${GH_OWNER}/${GH_REPO}.git" || true
             cd ${GH_REPO}
             uv sync
+            fi
             """)
             setup_script = setup_tpl.safe_substitute(
                 OPENPI_DATA_HOME=f"{bucket_env}/cache",
@@ -175,7 +180,8 @@ def watch_and_run(cfg: WatchConfig, env: TPUEnvConfig) -> None:
             )
 
             encoded = base64.b64encode(setup_script.encode()).decode().replace("\n", "")
-            setup_cmd = f"bash -lc 'echo {encoded} | base64 -d | bash -s'"
+            # Run bash as a login shell without global xtrace to avoid printing secrets
+            setup_cmd = f"bash -lc 'echo {encoded} | base64 -d | bash -l -s'"
             rc = mgr.raw(cfg.version, cmd=setup_cmd, worker="all")
             if rc != 0:
                 print(f"{_ts()} - Setup failed (rc={rc}). See above for remote logs. Back to state check.")
@@ -185,13 +191,14 @@ def watch_and_run(cfg: WatchConfig, env: TPUEnvConfig) -> None:
             print(f"{_ts()} - Starting training...")
             extra = " ".join(cfg.extra_args) if cfg.extra_args else ""
             target = {"v4": "pi_droid_cot_v4", "v5": "pi_droid_cot_v5", "v6": "pi_droid_cot_v6"}[cfg.version]
+            # Add set -x to echo commands in the training pipeline and preserve stderr/stdout
             train_cmd = (
-                f"source ~/.zshrc && cd ${env.gh_repo_name} && "
+                f"source ~/.zshrc && cd {env.gh_repo_name} && "
                 "git pull origin main && "
                 "XLA_PYTHON_CLIENT_MEM_FRACTION=0.95 "
                 f"uv run --group tpu scripts/train.py {target} {extra}"
             )
-            if not mgr.tmux(cfg.version, cmd=train_cmd, session="tpu"):
+            if not mgr.raw(cfg.version, cmd=train_cmd):
                 print(f"{_ts()} - Launch failed/SSH timed out. Back to state check.")
                 sleep(mgr.sleep_secs)
                 continue
@@ -209,15 +216,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("version", choices=["v4", "v5", "v6"], help="TPU version to target")
     p.add_argument("--force", "-f", action="store_true", help="Force setup and training even if READY")
     p.add_argument("--tpu-num", "-n", type=int, default=8, help="TPU chips (v4: 4/8/16/32; v5:16/32/64; v6:any)")
-    p.add_argument("extra", nargs=argparse.REMAINDER, help="Extra args to pass to training script")
     return p
 
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     ap = build_arg_parser()
-    ns = ap.parse_args(argv)
-    cfg = WatchConfig(version=ns.version, force_run=ns.force, tpu_num=ns.tpu_num, extra_args=ns.extra)
+    ns, extra = ap.parse_known_args(argv)
+    # Normalize extras: drop a leading '--' sentinel if present
+    if extra and extra[0] == "--":
+        extra = extra[1:]
+    cfg = WatchConfig(version=ns.version, force_run=ns.force, tpu_num=ns.tpu_num, extra_args=extra)
     env = TPUEnvConfig.from_env()
     watch_and_run(cfg, env)
     return 0
