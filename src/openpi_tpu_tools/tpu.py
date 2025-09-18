@@ -90,9 +90,7 @@ class TPUManager:
 
     def delete(self, version: Literal["v4", "v5", "v6"]) -> bool:
         zone = self._zone_for(version)
-        proc = run_with_timeout(
-            self.describe_timeout_s * 20,
-            self.ssh.kill_after_s,
+        rc = run_streaming(
             [
                 "gcloud",
                 "alpha",
@@ -106,9 +104,9 @@ class TPUManager:
                 "--project",
                 self.env.tpu_project,
                 "--quiet",
-            ],
+            ]
         )
-        return proc.returncode == 0
+        return rc == 0
 
     def create(self, version: Literal["v4", "v5", "v6"], *, tpu_num: int, topology: str | None = None) -> bool:
         zone = self._zone_for(version)
@@ -297,9 +295,7 @@ class TPUManager:
 
     def list(self, version: Literal["v4", "v5", "v6"]) -> int:
         zone = self._zone_for(version)
-        proc = run_with_timeout(
-            self.describe_timeout_s,
-            self.ssh.kill_after_s,
+        rc = run_streaming(
             [
                 "gcloud",
                 "compute",
@@ -308,16 +304,13 @@ class TPUManager:
                 "list",
                 "--zone",
                 zone,
-            ],
+            ]
         )
-        print(proc.stdout)
-        return proc.returncode
+        return rc
 
     def delete_by_name(self, version: Literal["v4", "v5", "v6"], name: str) -> int:
         zone = self._zone_for(version)
-        proc = run_with_timeout(
-            self.describe_timeout_s * 20,
-            self.ssh.kill_after_s,
+        rc = run_streaming(
             [
                 "gcloud",
                 "compute",
@@ -329,9 +322,9 @@ class TPUManager:
                 self.env.tpu_project,
                 "--zone",
                 zone,
-            ],
+            ]
         )
-        return proc.returncode
+        return rc
 
     def check_activity(self, version: Literal["v4", "v5", "v6"]) -> bool:
         """Return True if busy, False if idle. Failures => busy (conservative)."""
