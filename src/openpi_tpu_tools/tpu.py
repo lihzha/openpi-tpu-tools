@@ -108,6 +108,44 @@ class TPUManager:
         )
         return rc == 0
 
+    def stop(self, version: Literal["v4", "v5", "v6"]) -> bool:
+        zone = self._zone_for(version)
+        rc = run_streaming(
+            [
+                "gcloud",
+                "alpha",
+                "compute",
+                "tpus",
+                "tpu-vm",
+                "stop",
+                self.env.tpu_name,
+                "--zone",
+                zone,
+                "--project",
+                self.env.tpu_project,
+            ]
+        )
+        return rc == 0
+
+    def start(self, version: Literal["v4", "v5", "v6"]) -> bool:
+        zone = self._zone_for(version)
+        rc = run_streaming(
+            [
+                "gcloud",
+                "alpha",
+                "compute",
+                "tpus",
+                "tpu-vm",
+                "start",
+                self.env.tpu_name,
+                "--zone",
+                zone,
+                "--project",
+                self.env.tpu_project,
+            ]
+        )
+        return rc == 0
+
     def create(self, version: Literal["v4", "v5", "v6"], *, tpu_num: int, topology: str | None = None) -> bool:
         zone = self._zone_for(version)
         common = [

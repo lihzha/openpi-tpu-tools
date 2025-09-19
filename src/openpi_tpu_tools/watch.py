@@ -32,6 +32,109 @@ class WatchConfig:
     extra_args: list[str]
 
 
+def _build_setup_script(version: str, env: TPUEnvConfig) -> str:
+    bucket_env = {
+        "v4": env.tpu_bucket_v4,
+        "v5": env.tpu_bucket_v5,
+        "v6": env.tpu_bucket_v6,
+    }[version]
+    setup_tpl = Template(r"""set -euo pipefail
+
+            # 1. Set up environment variables
+            echo 'export WANDB_API_KEY="${WANDB_API_KEY}"' >> ~/.zshrc
+            echo 'export OPENPI_DATA_HOME="${OPENPI_DATA_HOME}"' >> ~/.zshrc
+            echo 'export GH_TOKEN="${GH_TOKEN}"' >> ~/.zshrc
+            echo 'export GH_OWNER="${GH_OWNER}"' >> ~/.zshrc
+            echo 'export GH_REPO="${GH_REPO}"' >> ~/.zshrc
+            echo 'export READ_ONLY=true' >> ~/.zshrc
+            echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
+            echo 'git config --global credential."https://github.com".helper ""' >> ~/.zshrc
+            echo 'export GIT_TERMINAL_PROMPT=0' >> ~/.zshrc
+            # 2. Download uv, or conda
+            curl -LsSf https://astral.sh/uv/install.sh | sh
+
+            # 3. Set up Github permissions
+            source ~/.zshrc
+
+            KEY_TITLE="${GH_REPO}-deploy-$(hostname)"
+            KEY_PATH="$HOME/.ssh/${GH_REPO}_deploy"
+
+            mkdir -p ~/.ssh && chmod 700 ~/.ssh
+            # Generate key only if not present (idempotent)
+            if [ ! -f "$KEY_PATH" ]; then
+            ssh-keygen -t ed25519 -N "" -f "$KEY_PATH" -C "$KEY_TITLE" >/dev/null
+            fi
+
+            ssh-keyscan -t rsa,ecdsa,ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null || true
+            chmod 600 ~/.ssh/known_hosts
+
+            PUB_KEY="$(cat "${KEY_PATH}.pub")"
+
+            if [ "${READ_ONLY}" = "true" ]; then RO=true; else RO=false; fi
+            JSON=$(printf '{"title":"%s","key":"%s","read_only":%s}' "$KEY_TITLE" "$PUB_KEY" "$RO")
+
+            set +e
+            HTTP=$(curl -sS -o /tmp/deploykey.out -w "%{http_code}" -X POST \
+            -H "Authorization: token ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/keys" \
+            -d "$JSON")
+            set -e
+            if [ "$HTTP" != "201" ] && [ "$HTTP" != "422" ]; then
+            echo "Deploy key API error (HTTP $HTTP):"
+            cat /tmp/deploykey.out
+            exit 1
+            fi
+
+            # Append SSH config only if missing (idempotent)
+            if ! grep -q "^Host github-${GH_REPO}$" ~/.ssh/config 2>/dev/null; then
+            {
+            echo "Host github-${GH_REPO}"
+            echo "  HostName github.com"
+            echo "  User git"
+            echo "  IdentityFile ${KEY_PATH}"
+            echo "  IdentitiesOnly yes"
+            } >> ~/.ssh/config
+            fi
+            chmod 600 ~/.ssh/config
+
+            # 4. Clone the repository and set up deps only if missing
+            if [ ! -d "${GH_REPO}/.git" ]; then
+            git clone --recurse-submodules "git@github-${GH_REPO}:${GH_OWNER}/${GH_REPO}.git" || true
+            cd ${GH_REPO}
+            uv sync
+            fi
+            """)
+    setup_script = setup_tpl.safe_substitute(
+        OPENPI_DATA_HOME=f"{bucket_env}/cache",
+        GH_TOKEN=env.gh_token,
+        WANDB_API_KEY=env.wandb_api_key,
+        GH_REPO=env.gh_repo_name,
+        GH_OWNER=env.gh_owner,
+    )
+    return setup_script
+
+
+def build_setup_cmd(version: str, env: TPUEnvConfig) -> str:
+    """Build the remote setup command identical to watch()'s setup step.
+
+    Returns a shell command suitable for execution over SSH.
+    """
+    setup_script = _build_setup_script(version, env)
+    encoded = base64.b64encode(setup_script.encode()).decode().replace("\n", "")
+    return f"bash -lc 'echo {encoded} | base64 -d | bash -l -s'"
+
+
+def run_setup(version: str, env: TPUEnvConfig, *, worker: str | None = "all") -> int:
+    """Run the setup step on the TPU worker(s).
+
+    This is exposed so callers can do: `tpu v4 setup`.
+    """
+    mgr = TPUManager(env)
+    setup_cmd = build_setup_cmd(version, env)
+    return mgr.raw(version, cmd=setup_cmd, worker=worker)
+
+
 def watch_and_run(cfg: WatchConfig, env: TPUEnvConfig) -> None:
     mgr = TPUManager(env)
 
@@ -99,90 +202,7 @@ def watch_and_run(cfg: WatchConfig, env: TPUEnvConfig) -> None:
 
         if run_setup_and_training:
             print(f"{_ts()} - Setting up environment and repository...")
-            bucket_env = {
-                "v4": env.tpu_bucket_v4,
-                "v5": env.tpu_bucket_v5,
-                "v6": env.tpu_bucket_v6,
-            }[cfg.version]
-            setup_tpl = Template(r"""set -euo pipefail
-
-            # 1. Set up environment variables
-            echo 'export WANDB_API_KEY="${WANDB_API_KEY}"' >> ~/.zshrc
-            echo 'export OPENPI_DATA_HOME="${OPENPI_DATA_HOME}"' >> ~/.zshrc
-            echo 'export GH_TOKEN="${GH_TOKEN}"' >> ~/.zshrc
-            echo 'export GH_OWNER="${GH_OWNER}"' >> ~/.zshrc
-            echo 'export GH_REPO="${GH_REPO}"' >> ~/.zshrc
-            echo 'export READ_ONLY=true' >> ~/.zshrc
-            echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
-            echo 'git config --global credential."https://github.com".helper ""' >> ~/.zshrc
-            echo 'export GIT_TERMINAL_PROMPT=0' >> ~/.zshrc
-            # 2. Download uv, or conda
-            curl -LsSf https://astral.sh/uv/install.sh | sh
-
-            # 3. Set up Github permissions
-            source ~/.zshrc
-
-            KEY_TITLE="${GH_REPO}-deploy-$(hostname)"
-            KEY_PATH="$HOME/.ssh/${GH_REPO}_deploy"
-
-            mkdir -p ~/.ssh && chmod 700 ~/.ssh
-            # Generate key only if not present (idempotent)
-            if [ ! -f "$KEY_PATH" ]; then
-            ssh-keygen -t ed25519 -N "" -f "$KEY_PATH" -C "$KEY_TITLE" >/dev/null
-            fi
-
-            ssh-keyscan -t rsa,ecdsa,ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null || true
-            chmod 600 ~/.ssh/known_hosts
-
-            PUB_KEY="$(cat "${KEY_PATH}.pub")"
-
-            if [ "${READ_ONLY}" = "true" ]; then RO=true; else RO=false; fi
-            JSON=$(printf '{"title":"%s","key":"%s","read_only":%s}' "$KEY_TITLE" "$PUB_KEY" "$RO")
-
-            set +e
-            HTTP=$(curl -sS -o /tmp/deploykey.out -w "%{http_code}" -X POST \
-            -H "Authorization: token ${GH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/keys" \
-            -d "$JSON")
-            set -e
-            if [ "$HTTP" != "201" ] && [ "$HTTP" != "422" ]; then
-            echo "Deploy key API error (HTTP $HTTP):"
-            cat /tmp/deploykey.out
-            exit 1
-            fi
-
-            # Append SSH config only if missing (idempotent)
-            if ! grep -q "^Host github-${GH_REPO}$" ~/.ssh/config 2>/dev/null; then
-            {
-            echo "Host github-${GH_REPO}"
-            echo "  HostName github.com"
-            echo "  User git"
-            echo "  IdentityFile ${KEY_PATH}"
-            echo "  IdentitiesOnly yes"
-            } >> ~/.ssh/config
-            fi
-            chmod 600 ~/.ssh/config
-
-            # 4. Clone the repository and set up deps only if missing
-            if [ ! -d "${GH_REPO}/.git" ]; then
-            git clone --recurse-submodules "git@github-${GH_REPO}:${GH_OWNER}/${GH_REPO}.git" || true
-            cd ${GH_REPO}
-            uv sync
-            fi
-            """)
-            setup_script = setup_tpl.safe_substitute(
-                OPENPI_DATA_HOME=f"{bucket_env}/cache",
-                GH_TOKEN=env.gh_token,
-                WANDB_API_KEY=env.wandb_api_key,
-                GH_REPO=env.gh_repo_name,
-                GH_OWNER=env.gh_owner,
-            )
-
-            encoded = base64.b64encode(setup_script.encode()).decode().replace("\n", "")
-            # Run bash as a login shell without global xtrace to avoid printing secrets
-            setup_cmd = f"bash -lc 'echo {encoded} | base64 -d | bash -l -s'"
-            rc = mgr.raw(cfg.version, cmd=setup_cmd, worker="all")
+            rc = run_setup(cfg.version, env, worker="all")
             if rc != 0:
                 print(f"{_ts()} - Setup failed (rc={rc}). See above for remote logs. Back to state check.")
                 sleep(mgr.sleep_secs)

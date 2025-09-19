@@ -27,6 +27,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_delete = sub.add_parser("delete", help="Delete this TPU (by TPU_NAME env)")
     _add_common(p_delete)
 
+    p_stop = sub.add_parser("stop", help="Stop this TPU (preserve allocation)")
+    _add_common(p_stop)
+
+    p_start = sub.add_parser("start", help="Start this TPU (previously stopped)")
+    _add_common(p_start)
+
     p_delete_name = sub.add_parser("delete-name", help="Delete a TPU by explicit name")
     _add_common(p_delete_name)
     p_delete_name.add_argument("name", help="TPU name to delete")
@@ -91,6 +97,12 @@ def main(argv: list[str] | None = None) -> int:
     if ns.cmd == "delete":
         ok = mgr.delete(ns.version)
         return 0 if ok else 1
+    if ns.cmd == "stop":
+        ok = mgr.stop(ns.version)
+        return 0 if ok else 1
+    if ns.cmd == "start":
+        ok = mgr.start(ns.version)
+        return 0 if ok else 1
     if ns.cmd == "delete-name":
         return mgr.delete_by_name(ns.version, ns.name)
     if ns.cmd == "tmux":
@@ -117,7 +129,13 @@ def main(argv: list[str] | None = None) -> int:
         ok = mgr.nuke_all(ns.version)
         return 0 if ok else 1
     if ns.cmd in {"v4", "v5", "v6"}:
-        # Preserve spacing and quotes of the raw command by joining with spaces
+        # Special case: allow `tpu v4 setup` to run the watch setup step
+        if getattr(ns, "rest", None) and len(ns.rest) >= 1 and ns.rest[0] == "setup":
+            from .watch import run_setup
+
+            worker = None if getattr(ns, "worker", None) is None else str(ns.worker)
+            return run_setup(ns.cmd, env, worker=(worker or "all"))
+        # Otherwise, treat as a raw remote command
         cmd = " ".join(ns.rest) if getattr(ns, "rest", None) else ""
         worker = None if getattr(ns, "worker", None) is None else str(ns.worker)
         return mgr.raw(ns.cmd, cmd=cmd, worker=(worker or "all"))

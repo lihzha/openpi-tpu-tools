@@ -93,6 +93,9 @@ def gcloud_tpu_ssh(
         "--zone",
         zone,
     ]
+    # Allow tunneling through IAP if requested (helps when port 22 is blocked)
+    if os.environ.get("GCLOUD_TPU_USE_IAP", "").strip() not in {"", "0", "false", "False"}:
+        args.append("--tunnel-through-iap")
     if worker is not None:
         args += ["--worker", str(worker)]
     if ssh.key_file and os.path.exists(ssh.key_file):
@@ -138,6 +141,9 @@ def gcloud_tpu_ssh_stream(
         "--zone",
         zone,
     ]
+    # Allow tunneling through IAP if requested (helps when port 22 is blocked)
+    if os.environ.get("GCLOUD_TPU_USE_IAP", "").strip() not in {"", "0", "false", "False"}:
+        args.append("--tunnel-through-iap")
     if worker is not None:
         args += ["--worker", str(worker)]
     if ssh.key_file and os.path.exists(ssh.key_file):
