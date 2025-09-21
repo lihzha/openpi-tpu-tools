@@ -210,13 +210,12 @@ def watch_and_run(cfg: WatchConfig, env: TPUEnvConfig) -> None:
 
             print(f"{_ts()} - Starting training...")
             extra = " ".join(cfg.extra_args) if cfg.extra_args else ""
-            target = {"v4": "pi_droid_cot_v4", "v5": "pi_droid_cot_v5", "v6": "pi_droid_cot_v6"}[cfg.version]
             # Add set -x to echo commands in the training pipeline and preserve stderr/stdout
             train_cmd = (
                 f"source ~/.zshrc && cd {env.gh_repo_name} && "
                 "git pull origin main && "
                 "XLA_PYTHON_CLIENT_MEM_FRACTION=0.95 "
-                f"uv run --group tpu scripts/train.py {target} {extra}"
+                f"uv run --group tpu scripts/train.py {extra}"
             )
             if not mgr.raw(cfg.version, cmd=train_cmd):
                 print(f"{_ts()} - Launch failed/SSH timed out. Back to state check.")
