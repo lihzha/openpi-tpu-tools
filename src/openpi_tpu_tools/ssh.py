@@ -78,6 +78,8 @@ def gcloud_tpu_ssh(
     command: str | None = None,
     extra_args: Iterable[str] | None = None,
     ssh: SSHOptions | None = None,
+    allocate_tty: bool = False,
+    no_shell_rc: bool = False,
 ) -> subprocess.CompletedProcess:
     ssh = ssh or SSHOptions()
     args: list[str] = [
@@ -108,8 +110,13 @@ def gcloud_tpu_ssh(
         args.extend(list(extra_args))
     args.append("--")
     args.extend(ssh.to_ssh_flags())
+    if allocate_tty:
+        args.extend(["-t", "-t"])  # force TTY allocation
     if command:
-        args += ["bash", "-lc", command]
+        if no_shell_rc:
+            args += ["bash", "--noprofile", "--norc", "-lc", command]
+        else:
+            args += ["bash", "-lc", command]
     return run_with_timeout(ssh.total_timeout_s, ssh.kill_after_s, args)
 
 
@@ -122,6 +129,8 @@ def gcloud_tpu_ssh_stream(
     command: str | None = None,
     extra_args: Iterable[str] | None = None,
     ssh: SSHOptions | None = None,
+    allocate_tty: bool = False,
+    no_shell_rc: bool = False,
 ) -> int:
     """Run gcloud TPU SSH and stream output live without a timeout wrapper.
 
@@ -156,6 +165,11 @@ def gcloud_tpu_ssh_stream(
         args.extend(list(extra_args))
     args.append("--")
     args.extend(ssh.to_ssh_flags())
+    if allocate_tty:
+        args.extend(["-t", "-t"])  # force TTY allocation
     if command:
-        args += ["bash", "-lc", command]
+        if no_shell_rc:
+            args += ["bash", "--noprofile", "--norc", "-lc", command]
+        else:
+            args += ["bash", "-lc", command]
     return run_streaming(args)

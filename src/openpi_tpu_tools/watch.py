@@ -217,7 +217,7 @@ def watch_and_run(cfg: WatchConfig, env: TPUEnvConfig) -> None:
                 "XLA_PYTHON_CLIENT_MEM_FRACTION=0.95 "
                 f"uv run --group tpu scripts/train.py {extra}"
             )
-            if not mgr.tmux(cfg.version, cmd=train_cmd):
+            if not mgr.tmux(cfg.version, cmd=train_cmd, session="tpu"):
                 print(f"{_ts()} - Launch failed/SSH timed out. Back to state check.")
                 sleep(mgr.sleep_secs)
                 continue

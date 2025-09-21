@@ -184,12 +184,16 @@ class TPUManager:
         line = f"set -eo pipefail; export PYTHONUNBUFFERED=1; {cmd} 2>&1 | tee -a $LOG"
         remote = (
             "command -v tmux >/dev/null || (sudo apt-get update && sudo apt-get install -y tmux);"
-            f"mkdir -p ~/{self.env.gh_repo_name}/logs;"
+            f"mkdir -p $HOME/{self.env.gh_repo_name}/logs;"
             "TS=$(date +%Y%m%d-%H%M%S);"
-            f"LOG=~/{self.env.gh_repo_name}/logs/{session}_$TS.log;"
-            f"if ! tmux has-session -t {session} 2>/dev/null; then tmux new-session -ds {session} -e SSH_AUTH_SOCK=$SSH_AUTH_SOCK; fi;"
-            # Use -l to send a literal line to the shell; quote once for remote bash parsing
-            f"tmux send-keys -t {session} -l {shlex.quote(line)} C-m"
+            f"LOG=$HOME/{self.env.gh_repo_name}/logs/{session}_$TS.log;"
+            f"if ! tmux has-session -t {shlex.quote(session)} 2>/dev/null; then "
+            f"    tmux new-session -ds {shlex.quote(session)} -e SSH_AUTH_SOCK=$SSH_AUTH_SOCK -e LOG=$LOG; "
+            "else "
+            f"    tmux set-environment -t {shlex.quote(session)} LOG $LOG; "
+            "fi;"
+            # Send the command and execute it
+            f"tmux send-keys -t {shlex.quote(session)} {shlex.quote(line)} Enter"
         )
         return (
             gcloud_tpu_ssh_stream(
@@ -218,13 +222,19 @@ class TPUManager:
         )
 
     def attach(self, version: Literal["v4", "v5", "v6"], *, session: str = "tpu", worker: int = 0) -> int:
+        # Use exec with `tmux new -As` to attach-or-create without running extra commands afterward
         return gcloud_tpu_ssh_stream(
             tpu_name=self.env.tpu_name,
             project=self.env.tpu_project,
             zone=self._zone_for(version),
             worker=str(worker),
-            command=f"tmux attach -t {shlex.quote(session)} || tmux new -As {shlex.quote(session)}",
+            command=(
+                "command -v tmux >/dev/null || (sudo apt-get update && sudo apt-get install -y tmux); "
+                f"exec tmux new -As {shlex.quote(session)}"
+            ),
             ssh=self.ssh,
+            allocate_tty=True,
+            no_shell_rc=True,
         )
 
     def tmux_ls(self, version: Literal["v4", "v5", "v6"]) -> bool:
@@ -241,11 +251,19 @@ class TPUManager:
         )
 
     def tail_log(self, version: Literal["v4", "v5", "v6"], *, worker: int = 0) -> int:
-        # Pick newest regular file; avoid directories to prevent 'tail: is a directory'
+        # Prefer tmux's LOG environment for the current session; fallback to newest in logs dir.
+        # Use -f to follow like the shell helper's v4_tail.
+        session = "tpu"
         cmd = (
-            f"cd ~/{self.env.gh_repo_name}/logs && "
-            'file=$(ls -1t 2>/dev/null | while read -r x; do [ -f "$x" ] && echo "$x" && break; done); '
-            '[ -n "$file" ] && tail -n 200 -f "$file" || echo \'No log files found in logs directory.\''
+            f"SESSION={shlex.quote(session)}; "
+            'LOG_FILE="$(tmux show-environment -t "$SESSION" LOG 2>/dev/null | sed -n "s/^LOG=//p")"; '
+            '[ -n "$LOG_FILE" ] && [ -f "$LOG_FILE" ] && { tail -n 200 -f "$LOG_FILE"; exit $?; }; '
+            'LOG_DIR="${LOG_FILE%/*}"; '
+            f'[ -n "$LOG_DIR" ] || LOG_DIR=$HOME/{self.env.gh_repo_name}/logs; '
+            'test -d "$LOG_DIR" || { echo "[ERROR] Logs dir not found: $LOG_DIR"; exit 1; }; '
+            'F="$(ls -1t "$LOG_DIR" | head -n1 || true)"; '
+            '[ -n "$F" ] || { echo "[ERROR] No log files in $LOG_DIR"; exit 1; }; '
+            'tail -n 200 -f "$LOG_DIR/$F"'
         )
         rc = gcloud_tpu_ssh_stream(
             tpu_name=self.env.tpu_name,

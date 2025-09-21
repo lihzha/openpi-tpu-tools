@@ -50,7 +50,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_ls = sub.add_parser("tmux-ls", help="List tmux sessions on all workers")
     _add_common(p_ls)
 
-    p_tail = sub.add_parser("tail", help="Tail latest tmux log on a worker")
+    p_tail = sub.add_parser("tail", help="Show last 50 lines of latest tmux log on a worker")
     _add_common(p_tail)
     p_tail.add_argument("--worker", type=int, default=0)
 
