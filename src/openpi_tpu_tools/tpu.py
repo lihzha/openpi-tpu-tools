@@ -299,11 +299,11 @@ class TPUManager:
             "set -euo pipefail;"
             "PIDS=$(pgrep -u $USER -f python || true);"
             "for pid in $PIDS; do "
-            "if tr '\\0' '\\n' </proc/$pid/environ 2>/dev/null | grep -qE '(^(JAX_|XLA_|TPU_|LIBTPU))'; then "
+            "if [ -r \"/proc/$pid/environ\" ] && tr '\\0' '\\n' </proc/$pid/environ 2>/dev/null | grep -qE '(^(JAX_|XLA_|TPU_|LIBTPU))'; then "
             "kill -TERM $pid 2>/dev/null || true; fi; done;"
             "sleep 2;"
             "for pid in $(pgrep -u $USER -f python || true); do "
-            "if tr '\\0' '\\n' </proc/$pid/environ 2>/dev/null | grep -qE '(^(JAX_|XLA_|TPU_|LIBTPU))'; then "
+            "if [ -r \"/proc/$pid/environ\" ] && tr '\\0' '\\n' </proc/$pid/environ 2>/dev/null | grep -qE '(^(JAX_|XLA_|TPU_|LIBTPU))'; then "
             "kill -0 $pid 2>/dev/null && kill -KILL $pid 2>/dev/null || true; fi; done;"
             "pgrep -a -u $USER -f python || true"
         )
@@ -323,12 +323,12 @@ class TPUManager:
         remote = (
             'echo "[INFO] Cleaning /tmp…";'
             "find /tmp -maxdepth 1 -user $USER "
-            "( -name 'jax*' -o -name '.jax*' -o -name 'pjrt*' -o -name 'xla*' "
-            "-o -name 'libtpu*' -o -name 'tpu*' -o -name 'coordination-*' -o -name 'jax-mp-*' ) "
+            "\\( -name 'jax*' -o -name '.jax*' -o -name 'pjrt*' -o -name 'xla*' "
+            "-o -name 'libtpu*' -o -name 'tpu*' -o -name 'coordination-*' -o -name 'jax-mp-*' \\) "
             "-print -exec rm -rf {} + 2>/dev/null || true;"
             'echo "[INFO] Cleaning /dev/shm…";'
             "find /dev/shm -maxdepth 1 -user $USER "
-            "( -name 'sem.*' -o -name 'psm_*' -o -name 'jax*' -o -name 'xla*' -o -name 'pjrt*' ) "
+            "\\( -name 'sem.*' -o -name 'psm_*' -o -name 'jax*' -o -name 'xla*' -o -name 'pjrt*' \\) "
             "-print -exec rm -f {} + 2>/dev/null || true"
         )
         return (
