@@ -97,7 +97,12 @@ def _build_setup_script(version: str, env: TPUEnvConfig) -> str:
             } >> ~/.ssh/config
             fi
             chmod 600 ~/.ssh/config
-
+            
+            if ! dpkg -s libgl1 libglib2.0-0 >/dev/null 2>&1; then
+                sudo apt-get update -y
+                sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libgl1 libglib2.0-0
+            fi
+            
             # 4. Clone the repository and set up deps only if missing
             if [ ! -d "${GH_REPO}/.git" ]; then
             git clone --recurse-submodules "git@github-${GH_REPO}:${GH_OWNER}/${GH_REPO}.git" || true
