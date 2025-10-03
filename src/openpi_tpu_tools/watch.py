@@ -98,32 +98,32 @@ def _build_setup_script(version: str, env: TPUEnvConfig) -> str:
             fi
             chmod 600 ~/.ssh/config
 
-            if ! dpkg -s libgl1 libglib2.0-0 >/dev/null 2>&1; then
-                # Free dpkg/apt locks by stopping services and killing lock holders
-                for i in $(seq 1 5); do
-                    set +e
-                    sudo systemctl stop unattended-upgrades.service apt-daily.service apt-daily-upgrade.service 2>/dev/null
-                    sudo systemctl kill --kill-who=all unattended-upgrades.service 2>/dev/null
-                    for lock in /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/cache/apt/archives/lock; do
-                        pids=$(sudo lsof -t "$lock" 2>/dev/null | sort -u | xargs -r echo)
-                        if [ -n "$pids" ]; then sudo kill -9 $pids 2>/dev/null; fi
-                    done
-                    sudo rm -f /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/cache/apt/archives/lock
-                    sudo dpkg --configure -a >/dev/null 2>&1
+            # if ! dpkg -s libgl1 libglib2.0-0 >/dev/null 2>&1; then
+            #     # Free dpkg/apt locks by stopping services and killing lock holders
+            #     for i in $(seq 1 5); do
+            #         set +e
+            #         sudo systemctl stop unattended-upgrades.service apt-daily.service apt-daily-upgrade.service 2>/dev/null
+            #         sudo systemctl kill --kill-who=all unattended-upgrades.service 2>/dev/null
+            #         for lock in /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/cache/apt/archives/lock; do
+            #             pids=$(sudo lsof -t "$lock" 2>/dev/null | sort -u | xargs -r echo)
+            #             if [ -n "$pids" ]; then sudo kill -9 $pids 2>/dev/null; fi
+            #         done
+            #         sudo rm -f /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/cache/apt/archives/lock
+            #         sudo dpkg --configure -a >/dev/null 2>&1
 
-                    sudo DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=30 update -y
-                    rc_update=$?
-                    sudo DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=30 install -y --no-install-recommends libgl1 libglib2.0-0
-                    rc_install=$?
-                    set -e
-                    if [ "$rc_update" -eq 0 ] && [ "$rc_install" -eq 0 ]; then
-                        break
-                    fi
-                    echo "dpkg/apt locked or failed (update=$rc_update install=$rc_install); retrying in 10s ($i/5)..."
-                    sleep 10
-                done
-                dpkg -s libgl1 libglib2.0-0 >/dev/null 2>&1 || { echo "Failed to install libgl1 libglib2.0-0"; exit 1; }
-            fi
+            #         sudo DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=30 update -y
+            #         rc_update=$?
+            #         sudo DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=30 install -y --no-install-recommends libgl1 libglib2.0-0
+            #         rc_install=$?
+            #         set -e
+            #         if [ "$rc_update" -eq 0 ] && [ "$rc_install" -eq 0 ]; then
+            #             break
+            #         fi
+            #         echo "dpkg/apt locked or failed (update=$rc_update install=$rc_install); retrying in 10s ($i/5)..."
+            #         sleep 10
+            #     done
+            #     dpkg -s libgl1 libglib2.0-0 >/dev/null 2>&1 || { echo "Failed to install libgl1 libglib2.0-0"; exit 1; }
+            # fi
 
             # 4. Clone the repository and set up deps only if missing
             if [ ! -d "${GH_REPO}/.git" ]; then
